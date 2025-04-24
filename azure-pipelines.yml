@@ -1,98 +1,197 @@
-name: Build, Push Deploy, & Manage Infrastructure
-
-on:
-  push:
-    branches:
+trigger:
+  branches:
+    include:
       - main
-  pull_request:
-    branches:
-      - "main"
 
-jobs:
-  build_and_push:
-    runs-on: ubuntu-latest
+pr:
+  branches:
+    include:
+      - main
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
+resources:
+  repositories:
+    - repository: self
+      type: github
+      connection: github-bestrong-connection
+      name: $(Build.Repository.Name)
+      ref: $(Build.SourceBranch)
 
-      # Step 1: Log in to Docker Hub
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+pool:
+  vmImage: 'ubuntu-latest'
 
-      # Step 2: Build Docker image
-      - name: Build Docker Image
-        run: |
-          docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/myapp:latest .
+variables:
+  terraformVersion: '1.5.7'
+  workingDirectory: '$(System.DefaultWorkingDirectory)'
+  group: terraform-variables  # Зміни на групу змінних
 
-      # Step 3: Push Docker image to Docker Hub
-      - name: Push Docker image to Docker Hub
-        run: |
-          docker push ${{ secrets.DOCKER_HUB_USERNAME }}/myapp:latest
+stages:
+  - stage: PR_Validation
+    displayName: 'PR Validation'
+    condition: eq(variables['Build.Reason'], 'PullRequest')
+    jobs:
+      - job: ValidateTerraform
+        displayName: 'Validate Terraform Configuration'
+        steps:
+          - checkout: self
+          
+          # Загальний крок: Встановлення Terraform
+          - task: Bash@3
+            displayName: 'Install Terraform $(terraformVersion)'
+            inputs:
+              targetType: 'inline'
+              script: |
+                wget -q https://releases.hashicorp.com/terraform/$(terraformVersion)/terraform_$(terraformVersion)_linux_amd64.zip
+                unzip -q terraform_$(terraformVersion)_linux_amd64.zip
+                sudo mv terraform /usr/local/bin/
+                terraform version
+          
+          # Загальний крок: Завантаження environment-файлу
+          - task: DownloadSecureFile@1
+            name: envFile
+            displayName: 'Download Terraform Environment File'
+            inputs:
+              secureFile: '.env'
+          
+          # Загальний крок: Перетворення environment-файлу в Unix формат
+          - task: Bash@3
+            displayName: 'Convert Environment File to Unix Format'
+            inputs:
+              targetType: 'inline'
+              script: |
+                tr -d '\r' < "$(envFile.secureFilePath)" > unix_env_file.tmp
+                cp unix_env_file.tmp "$(envFile.secureFilePath)"
+                rm unix_env_file.tmp
+                echo "Environment file converted to Unix format"
+          
+          # Terraform Init
+          - task: AzureCLI@2
+            displayName: 'Terraform Init'
+            inputs:
+              azureSubscription: 'bestrong-azure-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -a
+                source $(envFile.secureFilePath)
+                set +a
+                
+                terraform init \
+                  -backend-config="storage_account_name=$(TF_STATE_SA)" \
+                  -backend-config="container_name=$(TF_STATE_CONTAINER)" \
+                  -backend-config="resource_group_name=$(TF_STATE_RG)"
+              workingDirectory: '$(workingDirectory)'
+          
+          # Terraform Validate
+          - task: AzureCLI@2
+            displayName: 'Terraform Validate'
+            inputs:
+              azureSubscription: 'bestrong-azure-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -a
+                source $(envFile.secureFilePath)
+                set +a
+                
+                terraform validate
+              workingDirectory: '$(workingDirectory)'
 
-  terraform:
-    runs-on: ubuntu-latest
-    needs: build_and_push
+          # Terraform Plan
+          - task: AzureCLI@2
+            displayName: 'Terraform Plan'
+            inputs:
+              azureSubscription: 'bestrong-azure-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -a
+                source $(envFile.secureFilePath)
+                set +a
+                
+                terraform plan -out=tfplan
+              workingDirectory: '$(workingDirectory)'
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
+  - stage: CI_CD
+    displayName: 'CI/CD Pipeline'
+    condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), eq(variables['Build.Reason'], 'PullRequest')))
+    jobs:
+      - job: DeployTerraform
+        displayName: 'Deploy Infrastructure'
+        steps:
+          - checkout: self
+          
+          # Загальний крок: Встановлення Terraform
+          - task: Bash@3
+            displayName: 'Install Terraform $(terraformVersion)'
+            inputs:
+              targetType: 'inline'
+              script: |
+                wget -q https://releases.hashicorp.com/terraform/$(terraformVersion)/terraform_$(terraformVersion)_linux_amd64.zip
+                unzip -q terraform_$(terraformVersion)_linux_amd64.zip
+                sudo mv terraform /usr/local/bin/
+                terraform version
+          
+          # Загальний крок: Завантаження environment-файлу
+          - task: DownloadSecureFile@1
+            name: envFile
+            displayName: 'Download Terraform Environment File'
+            inputs:
+              secureFile: 'terraform.env'
+          
+          # Загальний крок: Перетворення environment-файлу в Unix формат
+          - task: Bash@3
+            displayName: 'Convert Environment File to Unix Format'
+            inputs:
+              targetType: 'inline'
+              script: |
+                tr -d '\r' < "$(envFile.secureFilePath)" > unix_env_file.tmp
+                cp unix_env_file.tmp "$(envFile.secureFilePath)"
+                rm unix_env_file.tmp
+                echo "Environment file converted to Unix format"
+          
+          # Terraform Init
+          - task: AzureCLI@2
+            displayName: 'Terraform Init'
+            inputs:
+              azureSubscription: 'bestrong-azure-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -a
+                source $(envFile.secureFilePath)
+                set +a
+                
+                terraform init \
+                  -backend-config="storage_account_name=$(TF_STATE_SA)" \
+                  -backend-config="container_name=$(TF_STATE_CONTAINER)" \
+                  -backend-config="resource_group_name=$(TF_STATE_RG)"
+              workingDirectory: '$(workingDirectory)'
 
-      # Step 1: Set up Terraform
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v1
-        with:
-          terraform_version: '1.5.7'
+          # Terraform Validate
+          - task: AzureCLI@2
+            displayName: 'Terraform Validate'
+            inputs:
+              azureSubscription: 'bestrong-azure-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -a
+                source $(envFile.secureFilePath)
+                set +a
+                
+                terraform validate
+              workingDirectory: '$(workingDirectory)'
 
-      # Step 2: Initialize Terraform
-      - name: Terraform Init
-        run: |
-          terraform init -backend-config="storage_account_name=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
-                         -backend-config="container_name=${{ secrets.TF_STATE_CONTAINER }}" \
-                         -backend-config="key=terraform.tfstate" \
-                         -backend-config="resource_group_name=${{ secrets.TF_STATE_RG }}"
-
-      # Step 3: Terraform Validate
-      - name: Terraform Validate
-        run: |
-          terraform validate
-
-      # Step 4: Terraform Plan
-      - name: Terraform Plan
-        run: |
-          terraform plan -out=tfplan -var="docker_image=${{ secrets.DOCKER_HUB_USERNAME }}/myapp:latest" \
-                         -var="client_id=${{ secrets.TF_VAR_client_id }}" \
-                         -var="client_secret=${{ secrets.TF_VAR_client_secret }}" \
-                         -var="tenant_id=${{ secrets.TF_VAR_tenant_id }}" \
-                         -var="subscription_id=${{ secrets.TF_VAR_subscription_id }}" \
-
-      # Step 5: Terraform Apply
-      - name: Terraform Apply
-        run: |
-          terraform apply -auto-approve tfplan
-
-  deploy_to_azure:
-    runs-on: ubuntu-latest
-    needs: terraform
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      # Step 1: Log in to Azure
-      - name: Azure Login
-        uses: azure/login@v1
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      # Step 2: Deploy Docker image to Azure App Service
-      - name: Deploy Docker image to Azure App Service
-        run: |
-          az webapp config container set \
-            --name ${{ secrets.AZURE_APP_SERVICE_NAME }} \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --docker-custom-image-name ${{ secrets.DOCKER_HUB_USERNAME }}/myapp:latest \
-            --docker-registry-server-url https://index.docker.io
+          # Terraform Apply
+          - task: AzureCLI@2
+            displayName: 'Terraform Apply'
+            inputs:
+              azureSubscription: 'bestrong-azure-connection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -a
+                source $(envFile.secureFilePath)
+                set +a
+                
+                terraform apply -auto-approve tfplan
