@@ -22,7 +22,7 @@ pool:
 variables:
   terraformVersion: '1.5.7'
   workingDirectory: '$(System.DefaultWorkingDirectory)'
-  group: terraform-variables  # Зміни на групу змінних
+  group: terraform-variables
 
 stages:
   - stage: PR_Validation
@@ -34,7 +34,7 @@ stages:
         steps:
           - checkout: self
           
-          # Загальний крок: Встановлення Terraform
+          # Install Terraform
           - task: Bash@3
             displayName: 'Install Terraform $(terraformVersion)'
             inputs:
@@ -45,14 +45,14 @@ stages:
                 sudo mv terraform /usr/local/bin/
                 terraform version
           
-          # Загальний крок: Завантаження environment-файлу
+          # Download .env
           - task: DownloadSecureFile@1
             name: envFile
             displayName: 'Download Terraform Environment File'
             inputs:
               secureFile: '.env'
           
-          # Загальний крок: Перетворення environment-файлу в Unix формат
+          # .env to Unix
           - task: Bash@3
             displayName: 'Convert Environment File to Unix Format'
             inputs:
@@ -120,7 +120,7 @@ stages:
         steps:
           - checkout: self
           
-          # Загальний крок: Встановлення Terraform
+          # Terraform Install
           - task: Bash@3
             displayName: 'Install Terraform $(terraformVersion)'
             inputs:
@@ -131,14 +131,14 @@ stages:
                 sudo mv terraform /usr/local/bin/
                 terraform version
           
-          # Загальний крок: Завантаження environment-файлу
+          # Download .env
           - task: DownloadSecureFile@1
             name: envFile
             displayName: 'Download Terraform Environment File'
             inputs:
               secureFile: 'terraform.env'
           
-          # Загальний крок: Перетворення environment-файлу в Unix формат
+          # .env to Unix
           - task: Bash@3
             displayName: 'Convert Environment File to Unix Format'
             inputs:
