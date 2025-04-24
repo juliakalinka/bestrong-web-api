@@ -6,7 +6,15 @@ trigger:
 pr:
   branches:
     include:
-      - main
+      - "*"
+
+resources:
+  repositories:
+    - repository: self
+      type: github
+      connection: github-bestrong-connection
+      name: $(Build.Repository.Name)
+      ref: $(Build.SourceBranch)
 
 pool:
   vmImage: 'ubuntu-latest'
