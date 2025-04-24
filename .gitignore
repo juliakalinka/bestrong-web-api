@@ -1,0 +1,59 @@
+# Environment variables
+.env
+*.env
+*.env.*
+
+# Azure and Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.log
+
+# Visual Studio and Visual Studio Code
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+bin/
+obj/
+*.userprefs
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+build/
+bld/
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+msbuild.log
+msbuild.err
+msbuild.wrn
+
+# Local Docker data
+**/data/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Dependency directories
+node_modules/
+packages/
+
+# IDE config
+.idea/
+*.swp
+*.swo
+
+# Docker
+docker-compose.yml
+docker-compose.override.yml

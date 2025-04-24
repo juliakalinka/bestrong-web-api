@@ -1,0 +1,5 @@
+resource_group_name     = "bestrong-web-rg"
+location                = "westeurope"
+app_service_plan_name   = "bestrong-web-plan"
+web_app_name            = "bestrong-web-app"
+docker_image            = "yuliakalinka/samplewebapiaspnetcore-webapi:latest"
