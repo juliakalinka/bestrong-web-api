@@ -1,20 +1,12 @@
 trigger:
   branches:
     include:
-      - "*"
+      - main
 
 pr:
   branches:
     include:
-      - "*"
-
-resources:
-  repositories:
-    - repository: self
-      type: github
-      connection: github-bestrong-connection
-      name: $(Build.Repository.Name)
-      ref: $(Build.SourceBranch)
+      - main
 
 pool:
   vmImage: 'ubuntu-latest'
@@ -23,157 +15,90 @@ variables:
   - name: terraformVersion
     value: '1.5.7'
   - name: workingDirectory
-    value: '$(System.DefaultWorkingDirectory)'
-  - group: terraform-variables
+    value: '$(System.DefaultWorkingDirectory)/terraform'
+  - group: terraform-vars
 
-stages:
-  # PR Stage - runs on Pull Requests
-  - stage: PR_Validation
-    displayName: 'PR Validation'
-    #condition: eq(variables['Build.Reason'], 'PullRequest')
-    jobs:
-      - job: ValidateTerraform
-        displayName: 'Validate Terraform Configuration'
-        steps:
-          - checkout: self
-          
-          - task: UseTerraform@0
-            inputs:
-              terraformVersion: '$(terraformVersion)'
+steps:
+  - checkout: self
+  - task: DownloadSecureFile@1
+    name: downloadTfvars
+    inputs:
+      secureFile: '.env'
 
-          - task: DownloadSecureFile@1
-            name: envFile
-            displayName: 'Download Terraform Environment File'
-            inputs:
-              secureFile: 'terraform.env'
-          
-          - task: Bash@3
-            displayName: 'Convert Environment File to Unix Format'
-            inputs:
-              targetType: 'inline'
-              script: |
-                tr -d '\r' < "$(envFile.secureFilePath)" > unix_env_file.tmp
-                cp unix_env_file.tmp "$(envFile.secureFilePath)"
-                rm unix_env_file.tmp
-                echo "Environment file converted to Unix format"
-          
-          - task: AzureCLI@2
-            displayName: 'Terraform Init'
-            inputs:
-              azureSubscription: 'bestrong-azure-connection'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -a
-                source $(envFile.secureFilePath)
-                set +a
-                
-                export TF_VAR_subscription_id=$(echo "$TF_VAR_subscription_id" | tr -d '\r')
-                echo "Using subscription ID: $TF_VAR_subscription_id"
-                
-                terraform init \
-                  -backend-config="storage_account_name=$(TF_STATE_SA)" \
-                  -backend-config="container_name=$(TF_STATE_CONTAINER)" \
-                  -backend-config="resource_group_name=$(TF_STATE_RG)"
-              workingDirectory: '$(workingDirectory)'
-          
-          - task: AzureCLI@2
-            displayName: 'Terraform Validate'
-            inputs:
-              azureSubscription: 'bestrong-azure-connection'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -a
-                source $(envFile.secureFilePath)
-                set +a
-                
-                export TF_VAR_subscription_id=$(echo "$TF_VAR_subscription_id" | tr -d '\r')
-                echo "Using subscription ID: $TF_VAR_subscription_id"
-                
-                terraform validate
-              workingDirectory: '$(workingDirectory)'
+  - task: AzureCLI@2
+    displayName: 'Install Terraform'
+    inputs:
+      azureSubscription: 'bestrong-azure-connection'
+      scriptType: 'bash'
+      scriptLocation: 'inlineScript'
+      inlineScript: |
+        curl -LO https://releases.hashicorp.com/terraform/$(terraformVersion)/terraform_$(terraformVersion)_linux_amd64.zip
+        unzip terraform_$(terraformVersion)_linux_amd64.zip
+        sudo mv terraform /usr/local/bin/
+        terraform -version
+
+  - task: Bash@3
+    displayName: 'Convert Environment File to Unix Format'
+    inputs:
+      targetType: 'inline'
+      script: |
+        tr -d '\r' < "$(downloadTfvars.secureFilePath)" > unix_env_file.tmp
+        cp unix_env_file.tmp "$(downloadTfvars.secureFilePath)"
+        rm unix_env_file.tmp
+        echo "Environment file converted to Unix format"
   
-  # Main Branch Stage - runs on main branch for CI/CD
-  - stage: CI_CD
-    displayName: 'CI/CD Pipeline'
-    condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), eq(variables['Build.Reason'], 'PullRequest')))
-    jobs:
-      - job: DeployTerraform
-        displayName: 'Deploy Infrastructure'
-        steps:
-          - checkout: self
-          
-          - task: UseTerraform@0
-            inputs:
-              terraformVersion: '$(terraformVersion)'
+  - task: AzureCLI@2
+    displayName: 'Terraform Init'
+    inputs:
+      azureSubscription: 'bestrong-azure-connection'
+      scriptType: 'bash'
+      scriptLocation: 'inlineScript'
+      inlineScript: |
+        set -a
+        source $(downloadTfvars.secureFilePath)
+        set +a
+        
+        export TF_VAR_subscription_id=$(echo "$TF_VAR_subscription_id" | tr -d '\r')
+        echo "Using subscription ID: $TF_VAR_subscription_id"
+        
+        terraform init \
+          -backend-config="storage_account_name=$(TF_STATE_SA)" \
+          -backend-config="container_name=$(TF_STATE_CONTAINER)" \
+          -backend-config="resource_group_name=$(TF_STATE_RG)"
+      workingDirectory: '$(workingDirectory)'
 
-          - task: DownloadSecureFile@1
-            name: envFile
-            displayName: 'Download Terraform Environment File'
-            inputs:
-              secureFile: 'terraform.env'
-          
-          - task: Bash@3
-            displayName: 'Convert Environment File to Unix Format'
-            inputs:
-              targetType: 'inline'
-              script: |
-                tr -d '\r' < "$(envFile.secureFilePath)" > unix_env_file.tmp
-                cp unix_env_file.tmp "$(envFile.secureFilePath)"
-                rm unix_env_file.tmp
-                echo "Environment file converted to Unix format"
-          
-          - task: AzureCLI@2
-            displayName: 'Terraform Init'
-            inputs:
-              azureSubscription: 'bestrong-azure-connection'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -a
-                source $(envFile.secureFilePath)
-                set +a
-                
-                export TF_VAR_subscription_id=$(echo "$TF_VAR_subscription_id" | tr -d '\r')
-                echo "Using subscription ID: $TF_VAR_subscription_id"
-                
-                terraform init \
-                  -backend-config="storage_account_name=$(TF_STATE_SA)" \
-                  -backend-config="container_name=$(TF_STATE_CONTAINER)" \
-                  -backend-config="resource_group_name=$(TF_STATE_RG)"
-              workingDirectory: '$(workingDirectory)'
-          
-          - task: AzureCLI@2
-            displayName: 'Terraform Validate'
-            inputs:
-              azureSubscription: 'bestrong-azure-connection'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -a
-                source $(envFile.secureFilePath)
-                set +a
-                
-                export TF_VAR_subscription_id=$(echo "$TF_VAR_subscription_id" | tr -d '\r')
-                echo "Using subscription ID: $TF_VAR_subscription_id"
-                
-                terraform validate
-              workingDirectory: '$(workingDirectory)'
-          
-          - task: AzureCLI@2
-            displayName: 'Terraform Apply'
-            inputs:
-              azureSubscription: 'bestrong-azure-connection'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -a
-                source $(envFile.secureFilePath)
-                set +a
-                
-                export TF_VAR_subscription_id=$(echo "$TF_VAR_subscription_id" | tr -d '\r')
-                echo "Using subscription ID: $TF_VAR_subscription_id"
-                
-                terraform apply -auto-approve tfplan
-              workingDirectory: '$(workingDirectory)'
+  - task: AzureCLI@2
+    displayName: 'Terraform Plan'
+    condition: eq(variables['Build.Reason'], 'PullRequest')
+    inputs:
+      azureSubscription: 'bestrong-azure-connection'
+      scriptType: 'bash'
+      scriptLocation: 'inlineScript'
+      inlineScript: |
+        set -a
+        source $(downloadTfvars.secureFilePath)
+        set +a
+        
+        export TF_VAR_subscription_id=$(echo "$TF_VAR_subscription_id" | tr -d '\r')
+        echo "Using subscription ID: $TF_VAR_subscription_id"
+        
+        terraform plan -out=tfplan -var-file=$(downloadTfvars.secureFilePath)
+      workingDirectory: '$(workingDirectory)'
+
+  - task: AzureCLI@2
+    displayName: 'Terraform Apply'
+    condition: eq(variables['Build.SourceBranchName'], 'main')
+    inputs:
+      azureSubscription: 'bestrong-azure-connection'
+      scriptType: 'bash'
+      scriptLocation: 'inlineScript'
+      inlineScript: |
+        set -a
+        source $(downloadTfvars.secureFilePath)
+        set +a
+        
+        export TF_VAR_subscription_id=$(echo "$TF_VAR_subscription_id" | tr -d '\r')
+        echo "Using subscription ID: $TF_VAR_subscription_id"
+        
+        terraform apply -auto-approve tfplan
+      workingDirectory: '$(workingDirectory)'
