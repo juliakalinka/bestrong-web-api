@@ -27,7 +27,7 @@ variables:
 stages:
   - stage: PR_Validation
     displayName: 'PR Validation'
-    condition: eq(variables['Build.Reason'], 'PullRequest')
+    #condition: eq(variables['Build.Reason'], 'PullRequest')
     jobs:
       - job: ValidateTerraform
         displayName: 'Validate Terraform Configuration'
