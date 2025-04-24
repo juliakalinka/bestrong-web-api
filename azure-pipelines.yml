@@ -6,192 +6,60 @@ trigger:
 pr:
   branches:
     include:
-      - main
-
-resources:
-  repositories:
-    - repository: self
-      type: github
-      connection: github-bestrong-connection
-      name: $(Build.Repository.Name)
-      ref: $(Build.SourceBranch)
+      - "*"
 
 pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-  terraformVersion: '1.5.7'
-  workingDirectory: '$(System.DefaultWorkingDirectory)'
-  group: terraform-variables  # Зміни на групу змінних
+  - name: workingDirectory
+    value: '$(System.DefaultWorkingDirectory)'
+  - group: terraform-variables
 
 stages:
-  - stage: PR_Validation
-    displayName: 'PR Validation'
-    condition: eq(variables['Build.Reason'], 'PullRequest')
+  - stage: Deploy
     jobs:
-      - job: ValidateTerraform
-        displayName: 'Validate Terraform Configuration'
+      - job: Terraform
         steps:
           - checkout: self
-          
-          # Загальний крок: Встановлення Terraform
-          - task: Bash@3
-            displayName: 'Install Terraform $(terraformVersion)'
-            inputs:
-              targetType: 'inline'
-              script: |
-                wget -q https://releases.hashicorp.com/terraform/$(terraformVersion)/terraform_$(terraformVersion)_linux_amd64.zip
-                unzip -q terraform_$(terraformVersion)_linux_amd64.zip
-                sudo mv terraform /usr/local/bin/
-                terraform version
-          
-          # Загальний крок: Завантаження environment-файлу
+
           - task: DownloadSecureFile@1
             name: envFile
-            displayName: 'Download Terraform Environment File'
+            displayName: 'Download .env File'
             inputs:
               secureFile: '.env'
-          
-          # Загальний крок: Перетворення environment-файлу в Unix формат
+
           - task: Bash@3
-            displayName: 'Convert Environment File to Unix Format'
+            displayName: 'Install Terraform via APT'
             inputs:
               targetType: 'inline'
               script: |
-                tr -d '\r' < "$(envFile.secureFilePath)" > unix_env_file.tmp
-                cp unix_env_file.tmp "$(envFile.secureFilePath)"
-                rm unix_env_file.tmp
-                echo "Environment file converted to Unix format"
-          
-          # Terraform Init
-          - task: AzureCLI@2
-            displayName: 'Terraform Init'
-            inputs:
-              azureSubscription: 'bestrong-azure-connection'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -a
-                source $(envFile.secureFilePath)
-                set +a
-                
-                terraform init \
-                  -backend-config="storage_account_name=$(TF_STATE_SA)" \
-                  -backend-config="container_name=$(TF_STATE_CONTAINER)" \
-                  -backend-config="resource_group_name=$(TF_STATE_RG)"
-              workingDirectory: '$(workingDirectory)'
-          
-          # Terraform Validate
-          - task: AzureCLI@2
-            displayName: 'Terraform Validate'
-            inputs:
-              azureSubscription: 'bestrong-azure-connection'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -a
-                source $(envFile.secureFilePath)
-                set +a
-                
-                terraform validate
-              workingDirectory: '$(workingDirectory)'
+                sudo apt-get update -y
+                sudo apt-get install -y gnupg software-properties-common curl
+                curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+                echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+                sudo apt-get update -y
+                sudo apt-get install -y terraform
+                terraform -version
 
-          # Terraform Plan
-          - task: AzureCLI@2
-            displayName: 'Terraform Plan'
-            inputs:
-              azureSubscription: 'bestrong-azure-connection'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -a
-                source $(envFile.secureFilePath)
-                set +a
-                
-                terraform plan -out=tfplan
-              workingDirectory: '$(workingDirectory)'
-
-  - stage: CI_CD
-    displayName: 'CI/CD Pipeline'
-    condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), eq(variables['Build.Reason'], 'PullRequest')))
-    jobs:
-      - job: DeployTerraform
-        displayName: 'Deploy Infrastructure'
-        steps:
-          - checkout: self
-          
-          # Загальний крок: Встановлення Terraform
           - task: Bash@3
-            displayName: 'Install Terraform $(terraformVersion)'
+            displayName: 'Terraform Init, Plan and Apply'
             inputs:
               targetType: 'inline'
               script: |
-                wget -q https://releases.hashicorp.com/terraform/$(terraformVersion)/terraform_$(terraformVersion)_linux_amd64.zip
-                unzip -q terraform_$(terraformVersion)_linux_amd64.zip
-                sudo mv terraform /usr/local/bin/
-                terraform version
-          
-          # Загальний крок: Завантаження environment-файлу
-          - task: DownloadSecureFile@1
-            name: envFile
-            displayName: 'Download Terraform Environment File'
-            inputs:
-              secureFile: 'terraform.env'
-          
-          # Загальний крок: Перетворення environment-файлу в Unix формат
-          - task: Bash@3
-            displayName: 'Convert Environment File to Unix Format'
-            inputs:
-              targetType: 'inline'
-              script: |
-                tr -d '\r' < "$(envFile.secureFilePath)" > unix_env_file.tmp
-                cp unix_env_file.tmp "$(envFile.secureFilePath)"
-                rm unix_env_file.tmp
-                echo "Environment file converted to Unix format"
-          
-          # Terraform Init
-          - task: AzureCLI@2
-            displayName: 'Terraform Init'
-            inputs:
-              azureSubscription: 'bestrong-azure-connection'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -a
-                source $(envFile.secureFilePath)
-                set +a
-                
-                terraform init \
-                  -backend-config="storage_account_name=$(TF_STATE_SA)" \
-                  -backend-config="container_name=$(TF_STATE_CONTAINER)" \
-                  -backend-config="resource_group_name=$(TF_STATE_RG)"
-              workingDirectory: '$(workingDirectory)'
+                echo "Converting .env to Unix format..."
+                tr -d '\r' < "$(envFile.secureFilePath)" > clean.env
+                source clean.env
+                set -e
 
-          # Terraform Validate
-          - task: AzureCLI@2
-            displayName: 'Terraform Validate'
-            inputs:
-              azureSubscription: 'bestrong-azure-connection'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -a
-                source $(envFile.secureFilePath)
-                set +a
-                
-                terraform validate
-              workingDirectory: '$(workingDirectory)'
+                echo "Initializing Terraform..."
+                terraform -chdir=$(workingDirectory) init \
+                  -backend-config="storage_account_name=$TF_STATE_SA" \
+                  -backend-config="container_name=$TF_STATE_CONTAINER" \
+                  -backend-config="resource_group_name=$TF_STATE_RG"
 
-          # Terraform Apply
-          - task: AzureCLI@2
-            displayName: 'Terraform Apply'
-            inputs:
-              azureSubscription: 'bestrong-azure-connection'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -a
-                source $(envFile.secureFilePath)
-                set +a
-                
-                terraform apply -auto-approve tfplan
+                echo "Planning Terraform..."
+                terraform -chdir=$(workingDirectory) plan -out=tfplan
+
+                echo "Applying Terraform..."
+                terraform -chdir=$(workingDirectory) apply -auto-approve tfplan
