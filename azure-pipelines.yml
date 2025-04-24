@@ -13,7 +13,7 @@ pool:
 
 variables:
   - name: workingDirectory
-    value: '$(System.DefaultWorkingDirectory)'
+    value: '$(System.DefaultWorkingDirectory)/terraform'
   - group: terraform-variables
 
 stages:
