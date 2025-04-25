@@ -9,6 +9,7 @@
 .terraform/
 .terraform.lock.hcl
 terraform.log
+terraform.tfvars
 
 # Visual Studio and Visual Studio Code
 .vs/
