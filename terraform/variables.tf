@@ -35,7 +35,7 @@ variable "resource_group_name" {
 variable "container_registry_name" {
   description = "Azure Container Registry name"
   type        = string
-  default     = "bestrongacr"
+  default     = "bestrongacr1web"
 }
 
 variable "image_tag" {
