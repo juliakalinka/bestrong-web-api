@@ -12,7 +12,7 @@ pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-  dockerRegistryServiceConnection: 'DockerHub'
+  dockerRegistryServiceConnection: 'docker-hub-connection'
   imageRepository: 'yuliakalinka/bestrong-web-api'
   dockerfile: 'Dockerfile'
   tag: '$(Build.BuildId)'
@@ -41,7 +41,7 @@ stages:
       displayName: 'Push Docker image'
       condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
       inputs:
-        dockerRegistryServiceConnection: 'docker-hub-connection'
+        containerRegistry: $(docker-hub-connection)
         repository: $(imageRepository)
         command: push
         tags: |
