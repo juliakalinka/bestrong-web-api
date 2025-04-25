@@ -1,4 +1,5 @@
 trigger:
+  batch: true
   branches:
     include:
       - main
@@ -14,102 +15,74 @@ jobs:
   displayName: 'Deploy Terraform Infrastructure to Azure'
   steps:
 
-  # Завантаження .env
   - task: DownloadSecureFile@1
     name: DownloadEnv
     displayName: 'Download .env Secure File'
     inputs:
       secureFile: '.env'
 
-  # Експорт змінних як TF_VAR_* для Terraform
   - script: |
       echo "Fixing line endings in .env (Windows to Unix)..."
       sed -i 's/\r$//' $(DownloadEnv.secureFilePath)
 
-      echo "Exporting environment variables from .env..."
+      echo "Sourcing environment variables from .env..."
       set -a
       source $(DownloadEnv.secureFilePath)
       set +a
+    displayName: 'Prepare Environment Variables'
 
-      echo "Exporting as TF_VAR_..."
-      export TF_VAR_client_id=$client_id
-      export TF_VAR_client_secret=$client_secret
-      export TF_VAR_tenant_id=$tenant_id
-      export TF_VAR_subscription_id=$subscription_id
-
-      echo "client_id=$TF_VAR_client_id"
-    displayName: 'Prepare and Export Environment Variables'
-
-  # Встановлення Terraform та ініціалізація
   - task: AzureCLI@2
-    displayName: 'Install Terraform & Init'
+    displayName: 'Login to Azure using Azure CLI'
     inputs:
       azureSubscription: 'bestrong-azure-connection'
       scriptType: bash
       scriptLocation: inlineScript
-      workingDirectory: $(System.DefaultWorkingDirectory)/terraform
       inlineScript: |
-        echo "Installing Terraform via apt..."
-        sudo apt-get update
-        sudo apt-get install -y gnupg software-properties-common curl lsb-release
-        curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
-        echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
-          sudo tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
-        sudo apt-get update && sudo apt-get install terraform -y
+        echo "Azure CLI login successful"
 
-        echo "Terraform version:"
-        terraform -version
+  - script: |
+      echo "Installing Terraform via apt..."
+      sudo apt-get update
+      sudo apt-get install -y gnupg software-properties-common curl lsb-release
+      curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+      echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+        sudo tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
+      sudo apt-get update && sudo apt-get install terraform -y
 
-        echo "Initializing Terraform..."
-        terraform init \
-          -backend-config="resource_group_name=bestrong-tfstate-rg" \
-          -backend-config="storage_account_name=bestrongtfstate" \
-          -backend-config="container_name=tfstate" \
-          -backend-config="key=terraform.tfstate"
+      echo "Terraform version:"
+      terraform -version
+    displayName: 'Install Terraform via apt'
 
-  # Validate
-  - task: AzureCLI@2
+  - script: |
+      echo "Attempting force unlock if state is locked..."
+      terraform force-unlock -force $(terraform state lock id) || true
+    workingDirectory: $(System.DefaultWorkingDirectory)/terraform
+    displayName: 'Force Unlock Terraform State (if needed)'
+
+  - script: |
+      echo "Initializing Terraform..."
+      terraform init \
+        -backend-config="resource_group_name=bestrong-tfstate-rg" \
+        -backend-config="storage_account_name=bestrongtfstate" \
+        -backend-config="container_name=tfstate" \
+        -backend-config="key=terraform.tfstate"
+    workingDirectory: $(System.DefaultWorkingDirectory)/terraform
+    displayName: 'Terraform Init'
+
+  - script: |
+      echo "Validating Terraform configuration..."
+      terraform validate
+    workingDirectory: $(System.DefaultWorkingDirectory)/terraform
     displayName: 'Terraform Validate'
-    inputs:
-      azureSubscription: 'bestrong-azure-connection'
-      scriptType: bash
-      scriptLocation: inlineScript
-      workingDirectory: $(System.DefaultWorkingDirectory)/terraform
-      inlineScript: |
-        terraform validate
 
-  # Force unlock (опційно)
-  - task: AzureCLI@2
-    displayName: 'Terraform Unlock (optional)'
-    condition: always()
-    inputs:
-      azureSubscription: 'bestrong-azure-connection'
-      scriptType: bash
-      scriptLocation: inlineScript
-      workingDirectory: $(System.DefaultWorkingDirectory)/terraform
-      inlineScript: |
-        echo "Trying to unlock TF state (if locked)..."
-        terraform force-unlock -force 61e29713-0222-c2bb-9db7-ab2eeef96f0e || true
-
-  # Планування
-  - task: AzureCLI@2
+  - script: |
+      echo "Planning Terraform changes..."
+      terraform plan -out=tfplan
+    workingDirectory: $(System.DefaultWorkingDirectory)/terraform
     displayName: 'Terraform Plan'
-    inputs:
-      azureSubscription: 'bestrong-azure-connection'
-      scriptType: bash
-      scriptLocation: inlineScript
-      workingDirectory: $(System.DefaultWorkingDirectory)/terraform
-      inlineScript: |
-        echo "Running Terraform plan..."
-        terraform plan -out=tfplan
 
-  # Застосування
-  - task: AzureCLI@2
+  - script: |
+      echo "Applying Terraform plan..."
+      terraform apply -auto-approve tfplan
+    workingDirectory: $(System.DefaultWorkingDirectory)/terraform
     displayName: 'Terraform Apply'
-    inputs:
-      azureSubscription: 'bestrong-azure-connection'
-      scriptType: bash
-      scriptLocation: inlineScript
-      workingDirectory: $(System.DefaultWorkingDirectory)/terraform
-      inlineScript: |
-        terraform apply -auto-approve tfplan
