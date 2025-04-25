@@ -41,7 +41,7 @@ stages:
       displayName: 'Push Docker image'
       condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
       inputs:
-        containerRegistry: 'docker-hub-connection'
+        dockerRegistryServiceConnection: 'docker-hub-connection'
         repository: $(imageRepository)
         command: push
         tags: |
