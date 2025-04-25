@@ -7,7 +7,7 @@ pool:
   vmImage: ubuntu-latest
 
 variables:
-  - group: terraform-variables
+  - group: terraform-variables  # якщо хочеш, можеш винести змінні з .env сюди
 
 jobs:
 - job: DeployTerraform
@@ -23,12 +23,8 @@ jobs:
   - script: |
       echo "Fixing line endings in .env (Windows to Unix)..."
       sed -i 's/\r$//' $(DownloadEnv.secureFilePath)
-
-      echo "Sourcing environment variables from .env..."
-      set -a
-      source $(DownloadEnv.secureFilePath)
-      set +a
-    displayName: 'Prepare Environment Variables'
+      cp $(DownloadEnv.secureFilePath) $(System.DefaultWorkingDirectory)/.env
+    displayName: 'Fix .env and move to working directory'
 
   - task: AzureCLI@2
     displayName: 'Install Terraform & Init'
@@ -38,6 +34,9 @@ jobs:
       scriptLocation: inlineScript
       workingDirectory: $(System.DefaultWorkingDirectory)/terraform
       inlineScript: |
+        echo "Sourcing environment variables..."
+        source ../.env
+
         echo "Installing Terraform via apt..."
         sudo apt-get update
         sudo apt-get install -y gnupg software-properties-common curl lsb-release
@@ -46,8 +45,7 @@ jobs:
           sudo tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
         sudo apt-get update && sudo apt-get install terraform -y
 
-        echo "Terraform version:"
-        terraform -version
+        terraform version
 
         echo "Initializing Terraform..."
         terraform init \
@@ -64,6 +62,9 @@ jobs:
       scriptLocation: inlineScript
       workingDirectory: $(System.DefaultWorkingDirectory)/terraform
       inlineScript: |
+        echo "Sourcing environment variables..."
+        source ../.env
+
         echo "Validating Terraform configuration..."
         terraform validate
 
@@ -75,6 +76,9 @@ jobs:
       scriptLocation: inlineScript
       workingDirectory: $(System.DefaultWorkingDirectory)/terraform
       inlineScript: |
+        echo "Sourcing environment variables..."
+        source ../.env
+
         echo "Planning Terraform changes..."
         terraform plan -out=tfplan
 
@@ -86,5 +90,8 @@ jobs:
       scriptLocation: inlineScript
       workingDirectory: $(System.DefaultWorkingDirectory)/terraform
       inlineScript: |
+        echo "Sourcing environment variables..."
+        source ../.env
+
         echo "Applying Terraform plan..."
         terraform apply -auto-approve tfplan
