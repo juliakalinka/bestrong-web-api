@@ -6,76 +6,100 @@ trigger:
 pr:
   branches:
     include:
-      - main
+      - '*'
+
+pool:
+  vmImage: 'ubuntu-latest'
 
 variables:
   - group: terraform-web-vars
-  - name: ACR_NAME
-    value: 'bestrongacr1web'
-  - name: IMAGE_NAME
+  - name: dockerfilePath
+    value: '$(Build.SourcesDirectory)/Dockerfile'
+  - name: imageRepository
     value: 'bestrong-web-api'
-  - name: DOCKERFILE_PATH
-    value: 'Dockerfile'
+  - name: tag
+    value: '$(Build.BuildId)'
+  - name: acrName
+    value: 'bestrongacr1web'
 
 stages:
-  - stage: BuildAndPush
-    displayName: Build and Push Docker image
-    jobs:
-      - job: DockerJob
-        displayName: Build & Push
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - checkout: self
+- stage: Build
+  displayName: 'Build and Push Docker Image'
+  jobs:
+  - job: BuildAndPush
+    displayName: 'Build and Push'
+    steps:
+    - task: Docker@2
+      displayName: 'Build Docker image'
+      inputs:
+        command: build
+        dockerfile: $(dockerfilePath)
+        repository: $(imageRepository)
+        tags: |
+          $(tag)
+          latest
+
+    - task: AzureCLI@2
+      displayName: 'Login to Azure'
+      inputs:
+        azureSubscription: 'azure-service-connection'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az acr login --name $(acrName)
+
+    - task: Docker@2
+      displayName: 'Push to ACR'
+      inputs:
+        containerRegistry: 'acr-service-connection'
+        repository: $(imageRepository)
+        command: 'push'
+        tags: |
+          $(tag)
+          latest
+
+- stage: Deploy
+  displayName: 'Deploy to Azure'
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - job: DeployTerraform
+    displayName: 'Deploy with Terraform'
+    steps:
+    - task: DownloadSecureFile@1
+      name: envFile
+      displayName: 'Download .env file'
+      inputs:
+        secureFile: '.env'
+
+    - task: TerraformInstaller@0
+      inputs:
+        terraformVersion: 'latest'
+
+    - task: Bash@3
+      displayName: 'Set Environment Variables'
+      inputs:
+        targetType: 'inline'
+        script: |
+          set -e
+          chmod +x $(envFile.secureFilePath)
+          source $(envFile.secureFilePath)
           
-          - script: |
-              echo "Перевірка структури репозиторію"
-              ls -la
-            displayName: 'Виведення структури репозиторію'
-
-          - task: DownloadSecureFile@1
-            name: envFile
-            displayName: 'Download .env file'
-            inputs:
-              secureFile: '.env'
-
-          - script: |
-              echo "Loading environment variables from .env file..."
-              set -a
-              source $(envFile.secureFilePath)
-              set +a
-            displayName: 'Load environment variables'
-
-          - task: AzureCLI@2
-            displayName: 'Build and Push Docker Image to ACR'
-            inputs:
-              azureSubscription: 'AzureConnection'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                echo "Logging into ACR..."
-                az acr login --name $(ACR_NAME)
-                
-                echo "Building Docker image..."
-                docker build -t $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(Build.BuildId) -t $(ACR_NAME).azurecr.io/$(IMAGE_NAME):latest -f $(DOCKERFILE_PATH) .
-                
-                echo "Pushing Docker image..."
-                docker push $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(Build.BuildId)
-                docker push $(ACR_NAME).azurecr.io/$(IMAGE_NAME):latest
-
-  - stage: DeployToAzure
-    displayName: 'Deploy to Azure App Service'
-    dependsOn: BuildAndPush
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-    jobs:
-      - job: DeployWebApp
-        displayName: 'Deploy to Azure Web App'
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: AzureWebAppContainer@1
-            displayName: 'Deploy to Azure Web App'
-            inputs:
-              azureSubscription: 'AzureConnection'
-              appName: 'bestrong-web-app'
-              imageName: '$(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(Build.BuildId)'
+          # Export as TF_VAR for Terraform
+          export TF_VAR_client_id=$CLIENT_ID
+          export TF_VAR_client_secret=$CLIENT_SECRET
+          export TF_VAR_tenant_id=$TENANT_ID
+          export TF_VAR_subscription_id=$SUBSCRIPTION_ID
+          
+          # Initialize Terraform
+          terraform init
+          
+          # Update the docker_image_name with build ID
+          export TF_VAR_docker_image_name="$(imageRepository):$(tag)"
+          
+          # Apply Terraform
+          terraform apply -auto-approve
+      env:
+        ARM_CLIENT_ID: $(CLIENT_ID)
+        ARM_CLIENT_SECRET: $(CLIENT_SECRET)
+        ARM_TENANT_ID: $(TENANT_ID)
+        ARM_SUBSCRIPTION_ID: $(SUBSCRIPTION_ID)
