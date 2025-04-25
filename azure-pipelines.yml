@@ -67,10 +67,19 @@ stages:
       inputs:
         secureFile: '.env'
     
-    - task: TerraformInstaller@0
+    - task: Bash@3
       displayName: 'Install Terraform'
       inputs:
-        terraformVersion: $(terraformVersion)
+        targetType: 'inline'
+        script: |
+          echo "Installing Terraform $(terraformVersion)..."
+          sudo apt-get update -y
+          sudo apt-get install -y gnupg software-properties-common curl lsb-release
+          curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+            sudo tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
+          sudo apt-get update && sudo apt-get install terraform=$terraformVersion -y
+          terraform --version
 
     - task: PowerShell@2
       displayName: 'Load Environment Variables'
@@ -106,12 +115,22 @@ stages:
         command: 'plan'
         workingDirectory: $(terraformWorkingDirectory)
         environmentServiceNameAzureRM: 'bestrong-azure-connection'
-        commandOptions: '-var="docker_image_name=$(imageRepository):$(tag)" -var="client_id=$(TF_VAR_client_id)" 
-          -var="client_secret=$(TF_VAR_client_secret)" -var="tenant_id=$(TF_VAR_tenant_id)" -var="subscription_id=$(TF_VAR_subscription_id)" 
-          -var="docker_username=$(DOCKER_USERNAME)" -var="docker_password=$(DOCKER_PASSWORD)" -var="location=$(TF_VAR_location)" 
-          -var="resource_group_name=$(TF_VAR_resource_group_name)" -var="service_plan_name=$(TF_VAR_service_plan_name)" 
-          -var="web_app_name=$(TF_VAR_web_app_name)" -var="environment=$(TF_VAR_environment)" 
-          -var="container_registry_name=$(TF_VAR_container_registry_name)" -var="service_plan_sku=$(TF_VAR_service_plan_sku)" -out=tfplan'
+        commandOptions: |
+          -var="docker_image_name=$(imageRepository):$(tag)" 
+          -var="client_id=$(TF_VAR_client_id)" 
+          -var="client_secret=$(TF_VAR_client_secret)" 
+          -var="tenant_id=$(TF_VAR_tenant_id)" 
+          -var="subscription_id=$(TF_VAR_subscription_id)" 
+          -var="docker_username=$(DOCKER_USERNAME)" 
+          -var="docker_password=$(DOCKER_PASSWORD)" 
+          -var="location=$(TF_VAR_location)" 
+          -var="resource_group_name=$(TF_VAR_resource_group_name)" 
+          -var="service_plan_name=$(TF_VAR_service_plan_name)" 
+          -var="web_app_name=$(TF_VAR_web_app_name)" 
+          -var="environment=$(TF_VAR_environment)" 
+          -var="container_registry_name=$(TF_VAR_container_registry_name)" 
+          -var="service_plan_sku=$(TF_VAR_service_plan_sku)" 
+          -out=tfplan
 
     - task: TerraformTaskV3@3
       displayName: 'Terraform Apply'
