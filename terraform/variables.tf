@@ -68,28 +68,10 @@ variable "environment" {
   default     = "Production"
 }
 
-variable "use_docker_auth" {
-  description = "Docker Auth"
-  type        = bool
-  default     = true
-}
-
-variable "docker_username" {
-  description = "Docker username"
-  type        = string
-  sensitive   = true
-}
-
-variable "docker_password" {
-  description = "Docker password / access token"
-  type        = string
-  sensitive   = true
-}
-
 variable "docker_image_name" {
   description = "Docker Image name with tag"
   type        = string
-  default     = "yuliakalinka/bestrong-web-api:latest"
+  default     = "bestrong-web-api:latest"
 }
 
 variable "tags" {

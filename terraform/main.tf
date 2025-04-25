@@ -41,6 +41,7 @@ resource "azurerm_role_assignment" "acr_pull" {
   scope                = azurerm_container_registry.acr.id
   role_definition_name = "AcrPull"
   principal_id         = azurerm_linux_web_app.webapp.identity[0].principal_id
+  depends_on           = [azurerm_linux_web_app.webapp]
 }
 
 resource "azurerm_service_plan" "asp" {
@@ -67,14 +68,12 @@ resource "azurerm_linux_web_app" "webapp" {
   site_config {
     always_on                         = true
     minimum_tls_version               = "1.2"
-    container_registry_use_managed_identity = false
+    container_registry_use_managed_identity = true
 
     application_stack {
-      docker_image_name        = var.docker_image_name
-      docker_registry_url      = "https://index.docker.io"
-      docker_registry_username = var.docker_username
-      docker_registry_password = var.docker_password
-}
+      docker_image_name        = "${azurerm_container_registry.acr.login_server}/${var.docker_image_name}"
+      docker_registry_url      = "https://${azurerm_container_registry.acr.login_server}"
+    }
   }
 
   app_settings = {
