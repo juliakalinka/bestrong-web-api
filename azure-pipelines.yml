@@ -8,64 +8,74 @@ pr:
     include:
       - main
 
-pool:
-  vmImage: 'ubuntu-latest'
-
 variables:
-  dockerRegistryServiceConnection: 'docker-hub-connection'
-  imageRepository: 'yuliakalinka/bestrong-web-api'
-  dockerfile: 'Dockerfile'
-  tag: '$(Build.BuildId)'
+  - group: terraform-web-vars
+  - name: ACR_NAME
+    value: 'bestrongacr1web'
+  - name: IMAGE_NAME
+    value: 'bestrong-web-api'
+  - name: DOCKERFILE_PATH
+    value: 'Dockerfile'
 
 stages:
-- stage: Build
-  displayName: 'Build and Test'
-  jobs:
-  - job: Build
-    displayName: 'Build and Test'
-    steps:
-    - checkout: self
-      
-    - task: Docker@2
-      displayName: 'Build Docker image'
-      inputs:
-        command: build
-        repository: $(imageRepository)
-        dockerfile: $(dockerfile)
-        buildContext: $(Build.SourcesDirectory)
-        tags: |
-          $(tag)
-          latest
+  - stage: BuildAndPush
+    displayName: Build and Push Docker image
+    jobs:
+      - job: DockerJob
+        displayName: Build & Push
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+          
+          - script: |
+              echo "Перевірка структури репозиторію"
+              ls -la
+            displayName: 'Виведення структури репозиторію'
 
-    - task: Docker@2
-      displayName: 'Push Docker image'
-      condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-      inputs:
-        containerRegistry: $(dockerRegistryServiceConnection)
-        repository: $(imageRepository)
-        command: push
-        tags: |
-          $(tag)
-          latest
+          - task: DownloadSecureFile@1
+            name: envFile
+            displayName: 'Download .env file'
+            inputs:
+              secureFile: '.env'
 
-- stage: Deploy
-  displayName: 'Deploy to Azure'
-  dependsOn: Build
-  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-  jobs:
-  - job: DeployWebApp
-    displayName: 'Deploy to Azure Web App'
-    steps:
-    - task: DownloadSecureFile@1
-      name: envFile
-      displayName: 'Download .env file'
-      inputs:
-        secureFile: '.env'
-        
-    - task: AzureWebAppContainer@1
-      displayName: 'Deploy to Azure Web App'
-      inputs:
-        azureSubscription: 'bestrong-azure-connection'
-        appName: 'bestrong-web-app'
-        containers: '$(imageRepository):$(tag)'
-        multicontainerConfigFile: ''
+          - script: |
+              echo "Loading environment variables from .env file..."
+              set -a
+              source $(envFile.secureFilePath)
+              set +a
+            displayName: 'Load environment variables'
+
+          - task: AzureCLI@2
+            displayName: 'Build and Push Docker Image to ACR'
+            inputs:
+              azureSubscription: 'AzureConnection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "Logging into ACR..."
+                az acr login --name $(ACR_NAME)
+                
+                echo "Building Docker image..."
+                docker build -t $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(Build.BuildId) -t $(ACR_NAME).azurecr.io/$(IMAGE_NAME):latest -f $(DOCKERFILE_PATH) .
+                
+                echo "Pushing Docker image..."
+                docker push $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(Build.BuildId)
+                docker push $(ACR_NAME).azurecr.io/$(IMAGE_NAME):latest
+
+  - stage: DeployToAzure
+    displayName: 'Deploy to Azure App Service'
+    dependsOn: BuildAndPush
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: DeployWebApp
+        displayName: 'Deploy to Azure Web App'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: AzureWebAppContainer@1
+            displayName: 'Deploy to Azure Web App'
+            inputs:
+              azureSubscription: 'AzureConnection'
+              appName: 'bestrong-web-app'
+              imageName: '$(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(Build.BuildId)'
